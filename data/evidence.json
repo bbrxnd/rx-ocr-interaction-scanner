@@ -1,0 +1,41 @@
+{
+  "catalog_verified": "2026-11-19",
+  "catalog_source": "https://rxnav.nlm.nih.gov/REST/rxcui.json",
+  "medications": [
+    {"name": "warfarin", "rxcui": "11289"},
+    {"name": "aspirin", "rxcui": "1191"},
+    {"name": "ibuprofen", "rxcui": "5640"},
+    {"name": "acetaminophen", "rxcui": "161"},
+    {"name": "lisinopril", "rxcui": "29046"}
+  ],
+  "sources": {
+    "DM-WARFARIN-3": {
+      "title": "WARFARIN SODIUM tablet — REMEDYREPACK INC.",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=61ab23a7-bc67-4777-854a-bf43c788a69a",
+      "setid": "61ab23a7-bc67-4777-854a-bf43c788a69a",
+      "version": "3",
+      "updated": "2026-11-09",
+      "retrieved": "2026-11-19",
+      "section": "7.3, Table 3",
+      "quote": "Because bleeding risk is increased when these drugs are used concomitantly with warfarin, closely monitor patients receiving any such drug with warfarin."
+    }
+  },
+  "records": [
+    {
+      "id": "E001",
+      "ingredients": ["11289", "1191"],
+      "names": ["warfarin", "aspirin"],
+      "source_id": "DM-WARFARIN-3",
+      "table_entry": "aspirin",
+      "finding": "The label lists aspirin among medicines associated with increased bleeding risk when used with warfarin."
+    },
+    {
+      "id": "E002",
+      "ingredients": ["11289", "5640"],
+      "names": ["warfarin", "ibuprofen"],
+      "source_id": "DM-WARFARIN-3",
+      "table_entry": "ibuprofen",
+      "finding": "The label lists ibuprofen among medicines associated with increased bleeding risk when used with warfarin."
+    }
+  ]
+}
