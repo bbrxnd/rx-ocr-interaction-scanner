@@ -1,35 +1,194 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import type { SubmitEvent } from 'react'
 
-type Health = { status: string; timestamp: string }
+const RXNORM_API = 'https://rxnav.nlm.nih.gov/REST'
+
+type RxNormProperties = {
+  rxcui: string
+  name: string
+  synonym?: string
+  tty: string
+}
+
+type Ingredient = {
+  rxcui: string
+  name: string
+  tty: string
+}
+
+type DrugConcept = RxNormProperties & {
+  ingredients: Ingredient[]
+}
+
+type SearchResponse = {
+  idGroup?: { rxnormId?: string[] }
+}
+
+type ApproximateResponse = {
+  approximateGroup?: {
+    candidate?: Array<{ rxcui: string; score: string; rank: string; name?: string }>
+  }
+}
+
+type PropertiesResponse = { properties?: RxNormProperties }
+
+type RelatedResponse = {
+  relatedGroup?: {
+    conceptGroup?: Array<{ tty?: string; conceptProperties?: Ingredient[] }>
+  }
+}
+
+async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
+  const response = await fetch(url, { signal, headers: { Accept: 'application/json' } })
+  if (!response.ok) throw new Error(`RxNorm returned HTTP ${response.status}. Please try again.`)
+  return response.json() as Promise<T>
+}
+
+async function getConcept(rxcui: string, signal: AbortSignal): Promise<DrugConcept> {
+  const [propertyResult, relatedResult] = await Promise.all([
+    getJson<PropertiesResponse>(`${RXNORM_API}/rxcui/${encodeURIComponent(rxcui)}/properties.json`, signal),
+    getJson<RelatedResponse>(`${RXNORM_API}/rxcui/${encodeURIComponent(rxcui)}/related.json?tty=IN+MIN+PIN`, signal),
+  ])
+
+  const properties = propertyResult.properties
+  if (!properties) throw new Error('RxNorm did not return details for a matched concept.')
+
+  const ingredients = (relatedResult.relatedGroup?.conceptGroup ?? [])
+    .filter((group) => ['IN', 'MIN', 'PIN'].includes(group.tty ?? ''))
+    .flatMap((group) => group.conceptProperties ?? [])
+  const uniqueIngredients = [...new Map(ingredients.map((item) => [item.rxcui, item])).values()]
+
+  return { ...properties, ingredients: uniqueIngredients }
+}
+
+async function searchConcepts(query: string, signal: AbortSignal): Promise<DrugConcept[]> {
+  const params = new URLSearchParams({ name: query, search: '2', allsrc: '0' })
+  const exact = await getJson<SearchResponse>(`${RXNORM_API}/rxcui.json?${params}`, signal)
+  let rxcuis = exact.idGroup?.rxnormId ?? []
+
+  if (rxcuis.length === 0) {
+    const approximateParams = new URLSearchParams({ term: query, maxEntries: '10', option: '1' })
+    const approximate = await getJson<ApproximateResponse>(`${RXNORM_API}/approximateTerm.json?${approximateParams}`, signal)
+    rxcuis = [...new Set((approximate.approximateGroup?.candidate ?? []).map((item) => item.rxcui))]
+  }
+
+  const concepts = await Promise.all(rxcuis.slice(0, 8).map(async (rxcui) => {
+    try {
+      return await getConcept(rxcui, signal)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      return null
+    }
+  }))
+
+  return concepts.filter((concept): concept is DrugConcept => concept !== null)
+}
 
 export default function App() {
-  const [health, setHealth] = useState<Health | null>(null)
-  const [error, setError] = useState(false)
+  const [query, setQuery] = useState('')
+  const [concepts, setConcepts] = useState<DrugConcept[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [searched, setSearched] = useState(false)
 
-  useEffect(() => {
-    fetch('/api/health')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json() as Promise<Health>
-      })
-      .then(setHealth)
-      .catch(() => setError(true))
-  }, [])
+  async function handleSearch(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const medicationName = query.trim()
+    if (!medicationName || loading) return
+
+    setLoading(true)
+    setError('')
+    setConcepts([])
+    setSearched(true)
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 15000)
+    try {
+      const results = await searchConcepts(medicationName, controller.signal)
+      setConcepts(results)
+      if (results.length === 0) setError('No matching RxNorm concepts were found. Try a generic or brand name, or include the strength and dosage form.')
+    } catch (searchError) {
+      setError(searchError instanceof DOMException && searchError.name === 'AbortError'
+        ? 'The RxNorm request timed out. Please try again.'
+        : searchError instanceof Error ? searchError.message : 'Could not reach RxNorm. Please try again.')
+    } finally {
+      window.clearTimeout(timeout)
+      setLoading(false)
+    }
+  }
 
   return (
-    <main>
-      <h1>Medication Interaction Explainer</h1>
+    <main className="page-shell">
+      <header className="page-header">
+        <p className="eyebrow">Medication reference</p>
+        <h1>RxNorm drug lookup</h1>
+        <p className="intro">Search a medication name to find matching clinical drug concepts and their ingredients.</p>
+      </header>
 
-      {error ? (
-        <p>API status: unreachable (is the backend running?)</p>
-      ) : health ? (
-        <>
-          <p>API status: {health.status}</p>
-          <p>Checked: {new Date(health.timestamp).toLocaleString()}</p>
-        </>
-      ) : (
-        <p>API status: loading</p>
-      )}
+      <section className="search-panel" aria-labelledby="search-title">
+        <h2 id="search-title">Look up a medication</h2>
+        <form className="search-form" onSubmit={handleSearch}>
+          <label htmlFor="medication-name">Medication name</label>
+          <div className="search-controls">
+            <input
+              id="medication-name"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="For example, Lipitor or atorvastatin 20 mg"
+              autoComplete="off"
+              required
+            />
+            <button type="submit" disabled={loading || !query.trim()}>
+              {loading ? 'Searching…' : 'Search RxNorm'}
+            </button>
+          </div>
+          <p className="field-hint">You can enter a generic name, brand name, or a name with strength and dosage form.</p>
+        </form>
+      </section>
+
+      <section className="results" aria-live="polite" aria-busy={loading}>
+        {loading && <p className="status-message">Searching RxNorm and retrieving ingredient details…</p>}
+        {!loading && error && <p className="status-message error-message" role="alert">{error}</p>}
+        {!loading && searched && !error && concepts.length > 0 && (
+          <>
+            <div className="results-heading">
+              <h2>Matching concepts</h2>
+              <span>{concepts.length} {concepts.length === 1 ? 'result' : 'results'}</span>
+            </div>
+            <div className="concept-list">
+              {concepts.map((concept) => (
+                <article className="concept-card" key={concept.rxcui}>
+                  <div className="concept-title-row">
+                    <div>
+                      <p className="concept-type">{concept.tty}</p>
+                      <h3>{concept.name}</h3>
+                    </div>
+                    <span className="rxcui">RxCUI {concept.rxcui}</span>
+                  </div>
+                  {concept.synonym && concept.synonym !== concept.name && <p className="synonym">Also listed as: {concept.synonym}</p>}
+                  <div className="ingredient-section">
+                    <h4>Ingredient information</h4>
+                    {concept.ingredients.length > 0 ? (
+                      <ul>
+                        {concept.ingredients.map((ingredient) => (
+                          <li key={ingredient.rxcui}>
+                            <span>{ingredient.name}</span>
+                            <span className="ingredient-type">{ingredient.tty}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted">No related ingredient concept was returned for this result.</p>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+            <p className="source-note">This product uses publicly available data from the U.S. National Library of Medicine (NLM), National Institutes of Health, Department of Health and Human Services; NLM is not responsible for the product and does not endorse or recommend this or any other product.</p>
+          </>
+        )}
+      </section>
     </main>
   )
 }
