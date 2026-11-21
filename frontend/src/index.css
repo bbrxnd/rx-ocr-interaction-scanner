@@ -104,6 +104,28 @@ h1 {
 .ingredient-type { color: #74817c; font-size: 0.76rem; }
 .muted, .source-note { margin: 0; color: #75817c; font-size: 0.86rem; }
 .source-note { margin-top: 18px; font-size: 0.78rem; }
+.select-concept-button {
+  margin-top: 18px;
+  padding: 9px 12px;
+  color: #236a55;
+  border: 1px solid #b9d1c7;
+  border-radius: 8px;
+  background: #f4faf7;
+  font-weight: 650;
+  cursor: pointer;
+}
+.select-concept-button:hover:not(:disabled), .select-concept-button[aria-pressed="true"] { background: #e4f1eb; }
+.select-concept-button:disabled { cursor: wait; opacity: 0.65; }
+.label-panel { display: grid; gap: 14px; margin-top: 28px; }
+.label-panel > h2 { margin: 0; font-size: 1.25rem; }
+.label-meta { padding: 16px 18px; border: 1px solid #dce5e0; border-radius: 12px; background: #fff; }
+.label-meta p { margin: 0 0 5px; color: #596761; font-size: 0.86rem; }
+.label-meta a { color: #236a55; font-size: 0.86rem; font-weight: 650; }
+.label-meta .label-disclaimer { margin-top: 10px; color: #75817c; font-size: 0.78rem; }
+.evidence-list { display: grid; gap: 12px; }
+.evidence-card { padding: 20px 22px; border: 1px solid #dce5e0; border-radius: 12px; background: #fff; }
+.evidence-card h3 { margin-bottom: 10px; color: #28725d; font-size: 0.9rem; }
+.evidence-card blockquote { margin: 0; color: #34423c; font-size: 0.92rem; white-space: pre-wrap; }
 
 @media (max-width: 600px) {
   .page-shell { padding: 44px 16px 56px; }
@@ -112,4 +134,5 @@ h1 {
   .search-controls button { min-height: 46px; }
   .concept-card { padding: 19px 18px; }
   .concept-title-row { flex-direction: column; gap: 10px; }
+  .evidence-card { padding: 17px 16px; }
 }

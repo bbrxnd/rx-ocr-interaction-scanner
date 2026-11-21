@@ -19,6 +19,23 @@ type DrugConcept = RxNormProperties & {
 }
 
 type SearchResponse = { concepts?: DrugConcept[]; detail?: string }
+type LabelSection = { section: string; text: string }
+type FDAResult = {
+  matched: boolean
+  label: null | {
+    match_basis: string
+    source_url: string
+    metadata: {
+      brand_name?: string[]
+      generic_name?: string[]
+      manufacturer_name?: string[]
+      effective_time?: string
+      set_id?: string
+    }
+    sections: LabelSection[]
+  }
+  detail?: string
+}
 
 export default function App() {
   const [query, setQuery] = useState('')
@@ -26,6 +43,10 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [searched, setSearched] = useState(false)
+  const [selectedRxcui, setSelectedRxcui] = useState('')
+  const [labelResult, setLabelResult] = useState<FDAResult | null>(null)
+  const [labelLoading, setLabelLoading] = useState(false)
+  const [labelError, setLabelError] = useState('')
 
   async function handleSearch(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -35,6 +56,9 @@ export default function App() {
     setLoading(true)
     setError('')
     setConcepts([])
+    setSelectedRxcui('')
+    setLabelResult(null)
+    setLabelError('')
     setSearched(true)
 
     const controller = new AbortController()
@@ -57,12 +81,31 @@ export default function App() {
     }
   }
 
+  async function handleSelectConcept(rxcui: string) {
+    if (labelLoading) return
+    setSelectedRxcui(rxcui)
+    setLabelResult(null)
+    setLabelError('')
+    setLabelLoading(true)
+    try {
+      const params = new URLSearchParams({ rxcui })
+      const response = await fetch(`/api/fda/label?${params}`)
+      const body = await response.json() as FDAResult
+      if (!response.ok) throw new Error(body.detail ?? `FDA lookup failed with HTTP ${response.status}.`)
+      setLabelResult(body)
+    } catch (lookupError) {
+      setLabelError(lookupError instanceof Error ? lookupError.message : 'Could not retrieve FDA label evidence.')
+    } finally {
+      setLabelLoading(false)
+    }
+  }
+
   return (
     <main className="page-shell">
       <header className="page-header">
         <p className="eyebrow">Medication reference</p>
-        <h1>RxNorm drug lookup</h1>
-        <p className="intro">Search a medication name to find matching clinical drug concepts and their ingredients.</p>
+        <h1>Medication label lookup</h1>
+        <p className="intro">Search a medication, select the matching RxNorm concept, and review evidence from its FDA label.</p>
       </header>
 
       <section className="search-panel" aria-labelledby="search-title">
@@ -122,9 +165,53 @@ export default function App() {
                       <p className="muted">No related ingredient concept was returned for this result.</p>
                     )}
                   </div>
+                  <button
+                    className="select-concept-button"
+                    type="button"
+                    disabled={labelLoading}
+                    aria-pressed={selectedRxcui === concept.rxcui}
+                    onClick={() => void handleSelectConcept(concept.rxcui)}
+                  >
+                    {selectedRxcui === concept.rxcui && labelLoading ? 'Finding FDA label…' : 'View FDA label evidence'}
+                  </button>
                 </article>
               ))}
             </div>
+            {selectedRxcui && (
+              <section className="label-panel" aria-live="polite" aria-busy={labelLoading} aria-labelledby="label-evidence-title">
+                <h2 id="label-evidence-title">FDA label evidence</h2>
+                {labelLoading && <p className="status-message">Searching FDA labels using active ingredients, then the concept name…</p>}
+                {!labelLoading && labelError && <p className="status-message error-message" role="alert">{labelError}</p>}
+                {!labelLoading && labelResult && !labelResult.matched && (
+                  <p className="status-message">No matching FDA label was found for this concept.</p>
+                )}
+                {!labelLoading && labelResult?.matched && labelResult.label && (
+                  <>
+                    <div className="label-meta">
+                      <p>Matched by {labelResult.label.match_basis}.</p>
+                      <p>
+                        {[...(labelResult.label.metadata.brand_name ?? []), ...(labelResult.label.metadata.generic_name ?? [])].join(' · ')}
+                        {labelResult.label.metadata.effective_time && ` · Label date ${labelResult.label.metadata.effective_time}`}
+                      </p>
+                      <a href={labelResult.label.source_url} target="_blank" rel="noreferrer">View source on openFDA</a>
+                      <p className="label-disclaimer">FDA label records are submitted by manufacturers and may not reflect current labeling. This evidence is for reference and is not medical advice.</p>
+                    </div>
+                    {labelResult.label.sections.length ? (
+                      <div className="evidence-list">
+                        {labelResult.label.sections.map((section, index) => (
+                          <article className="evidence-card" key={`${section.section}-${index}`}>
+                            <h3>{section.section}</h3>
+                            <blockquote>{section.text}</blockquote>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="status-message">A matching label was found, but it does not include the requested safety sections.</p>
+                    )}
+                  </>
+                )}
+              </section>
+            )}
             <p className="source-note">This product uses publicly available data from the U.S. National Library of Medicine (NLM), National Institutes of Health, Department of Health and Human Services; NLM is not responsible for the product and does not endorse or recommend this or any other product.</p>
           </>
         )}
