@@ -8,7 +8,7 @@ passage it is based on.
 ## Feature Plan
 
 - [x] Project skeleton
-- [ ] RxNorm drug search and confirmation
+- [x] RxNorm drug search and confirmation
 - [ ] FDA label evidence + label matching
 - [ ] Gemini explanations
 - [ ] Photo scanning (OCR)
