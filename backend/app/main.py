@@ -1,9 +1,19 @@
 import asyncio
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
+
+from app.evidence import load_data, normalize, parse_names, retrieve
+from app.providers import ProviderError, get_provider
+from app.ocr import MAX_BYTES, OCRError, extract_text
+
+load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 
 RXNORM_API = "https://rxnav.nlm.nih.gov/REST"
 RXNORM_TIMEOUT_SECONDS = 10.0
@@ -22,6 +32,52 @@ app = FastAPI(
     title="Medication Interaction Explainer API",
     version="0.1.0",
 )
+
+
+@app.post('/api/ocr')
+async def scan_image(file: UploadFile = File(...)) -> dict:
+    """Extract text locally; the user must review it before use."""
+    try:
+        data = await file.read(MAX_BYTES + 1)
+        text = await run_in_threadpool(extract_text, data)
+    except OCRError as error:
+        raise HTTPException(status_code=error.status, detail=error.message) from error
+    finally:
+        await file.close()
+    return {'text': text}
+
+
+class EvidenceRequest(BaseModel):
+    names: list[str] = Field(min_length=2, max_length=6)
+    confirmed: bool
+
+
+@app.post('/api/evidence')
+def medication_evidence(request: EvidenceRequest) -> dict:
+    """Compare confirmed, exact catalog ingredients against curated evidence."""
+    if not request.confirmed:
+        raise HTTPException(status_code=422, detail='Confirm the ingredient list before continuing.')
+    if any('\n' in name or '\r' in name for name in request.names):
+        raise HTTPException(status_code=422, detail='Enter one ingredient per item.')
+    try:
+        names = parse_names('\n'.join(request.names))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    data = load_data()
+    medications, unknown = normalize(names, data)
+    if unknown:
+        raise HTTPException(status_code=422, detail='Unrecognized ingredients: ' + ', '.join(unknown))
+    records, uncovered = retrieve(medications, data)
+    explanation = None
+    error = None
+    if records:
+        try:
+            result = get_provider().explain(records)
+            explanation = {'findings': result.findings, 'label': result.label, 'generated': result.generated}
+        except ProviderError as exc:
+            error = str(exc)
+    return {'medications': medications, 'records': records, 'uncovered': uncovered,
+            'explanation': explanation, 'explanation_error': error}
 
 
 async def _rxnorm_get(
