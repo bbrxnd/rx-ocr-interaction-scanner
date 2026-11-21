@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import PairReview from './PairReview'
 import type { SubmitEvent } from 'react'
+import ExplainPanel from './ExplainPanel'
 
 type RxNormProperties = {
   rxcui: string
@@ -48,6 +49,7 @@ export default function App() {
   const [labelResult, setLabelResult] = useState<FDAResult | null>(null)
   const [labelLoading, setLabelLoading] = useState(false)
   const [labelError, setLabelError] = useState('')
+  const selectedName = concepts.find((concept) => concept.rxcui === selectedRxcui)?.name ?? ''
 
   async function handleSearch(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -199,6 +201,17 @@ export default function App() {
                       <a href={labelResult.label.source_url} target="_blank" rel="noreferrer">View source on openFDA</a>
                       <p className="label-disclaimer">FDA label records are submitted by manufacturers and may not reflect current labeling. This evidence is for reference and is not medical advice.</p>
                     </div>
+                    {labelResult.label.sections.length > 0 && (
+                      <ExplainPanel
+                        key={selectedRxcui}
+                        medications={[selectedName]}
+                        evidence={labelResult.label.sections.map((section) => ({
+                          drug: selectedName,
+                          section: section.section,
+                          text: section.text,
+                        }))}
+                      />
+                    )}
                     {labelResult.label.sections.length ? (
                       <div className="evidence-list">
                         {labelResult.label.sections.map((section, index) => (

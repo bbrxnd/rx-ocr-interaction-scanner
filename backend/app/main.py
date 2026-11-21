@@ -14,6 +14,7 @@ from app.providers import ProviderError, get_provider
 from app.ocr import MAX_BYTES, OCRError, extract_text
 
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
+from .explain import router as explain_router
 
 RXNORM_API = "https://rxnav.nlm.nih.gov/REST"
 RXNORM_TIMEOUT_SECONDS = 10.0
@@ -33,6 +34,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.include_router(explain_router)
 
 @app.post('/api/ocr')
 async def scan_image(file: UploadFile = File(...)) -> dict:

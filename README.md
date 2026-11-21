@@ -8,10 +8,11 @@ passage it is based on.
 ## Feature Plan
 
 - [x] Project skeleton
-- [x] RxNorm drug search and confirmation
-- [x] FDA label evidence + label matching
-- [ ] Gemini explanations
+- [x] RxNorm drug search and FDA label lookup (one medication at a time)
+- [x] Gemini explanations of individual FDA label passages, checked against label quotes
+- [ ] Medication list and interaction check — initial prototype covering two pairs
 - [ ] Photo scanning (OCR) — initial local prototype with manual review
+- [ ] Allergy and food checks
 
 ## Run instructions
 
@@ -27,6 +28,10 @@ uvicorn app.main:app --reload
 ```
 API docs: http://localhost:8000/docs
 
+To turn on the "Explain in plain language" button, copy `backend/.env.example` to `backend/.env`
+and add a free Gemini API key from https://aistudio.google.com/apikey. Run the tests with `pytest` from `backend/`.
+
+
 ### Frontend (Node 20.19 or newer)
 ```powershell
 cd frontend
@@ -39,7 +44,7 @@ Open http://localhost:5173
 
 The React app includes a curated, ingredient-level comparison alongside the live RxNorm and FDA label lookup. Enter 2–6 exact generic ingredient names, review and confirm the list, then select **Find evidence and explain**. Try the supported example (warfarin and aspirin), or warfarin and ibuprofen. The coverage example (aspirin and lisinopril) shows how unsupported pairs are reported. Recognized names are warfarin, aspirin, ibuprofen, acetaminophen, and lisinopril. Only the first two pairs have curated evidence; missing evidence does not establish safety.
 
-The default explanation is a prepared demo summary, not an AI-generated response. To use an optional model, copy `backend/.env.example` to `backend/.env` and configure `AI_PROVIDER`, `AI_BASE_URL`, and `AI_MODEL`; set `AI_API_KEY` if the compatible provider requires it. Supported providers are `demo`, `ollama`, and an OpenAI-compatible chat service. Restart the backend after changes. Provider failures leave the source evidence visible. Citation validation checks the response format and IDs, not clinical accuracy.
+For pair review, the default explanation is a prepared demo summary, not an AI-generated response. The separate individual-label lookup has its own Gemini explanation button. To use an optional model, copy `backend/.env.example` to `backend/.env` and configure `AI_PROVIDER`, `AI_BASE_URL`, and `AI_MODEL`; set `AI_API_KEY` if the compatible provider requires it. Supported providers are `demo`, `ollama`, and an OpenAI-compatible chat service. Restart the backend after changes. Provider failures leave the source evidence visible. Citation validation checks the response format and IDs, not clinical accuracy.
 
 The pair review uses a bundled DailyMed excerpt, not live FDA label matching. The separate lookup below it uses live RxNorm and openFDA services and requires internet access. The pair review does not evaluate doses, formulations, food, allergies, or patient-specific factors. This educational prototype is not clinically reviewed; discuss concerns with a pharmacist or prescriber.
 
