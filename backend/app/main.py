@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
+from .explain import router as explain_router
 
 RXNORM_API = "https://rxnav.nlm.nih.gov/REST"
 RXNORM_TIMEOUT_SECONDS = 10.0
@@ -23,6 +24,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.include_router(explain_router)
 
 async def _rxnorm_get(
     client: httpx.AsyncClient,
