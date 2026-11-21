@@ -9,7 +9,7 @@ passage it is based on.
 
 - [x] Project skeleton
 - [x] RxNorm drug search and confirmation
-- [ ] FDA label evidence + label matching
+- [x] FDA label evidence + label matching
 - [ ] Gemini explanations
 - [ ] Photo scanning (OCR)
 
