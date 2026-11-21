@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -7,6 +8,15 @@ from fastapi import FastAPI, HTTPException, Query
 RXNORM_API = "https://rxnav.nlm.nih.gov/REST"
 RXNORM_TIMEOUT_SECONDS = 10.0
 MAX_CONCEPTS = 8
+OPENFDA_API = "https://api.fda.gov/drug/label.json"
+LABEL_SECTIONS = {
+    "boxed_warning": "Boxed warning",
+    "contraindications": "Contraindications",
+    "warnings": "Warnings",
+    "precautions": "Precautions",
+    "drug_interactions": "Drug interactions",
+    "adverse_reactions": "Adverse reactions",
+}
 
 app = FastAPI(
     title="Medication Interaction Explainer API",
@@ -22,6 +32,125 @@ async def _rxnorm_get(
     response = await client.get(f"{RXNORM_API}{path}", params=params)
     response.raise_for_status()
     return response.json()
+
+
+async def _openfda_get(client: httpx.AsyncClient, search: str) -> dict:
+    response = await client.get(
+        OPENFDA_API,
+        params={"search": search, "limit": "25"},
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _label_values(label: dict, field: str) -> list[str]:
+    values = label.get(field, [])
+    if isinstance(values, str):
+        values = [values]
+    return [value for value in values if isinstance(value, str) and value.strip()]
+
+
+def _matching_labels(labels: list[dict], ingredients: list[str]) -> list[dict]:
+    normalized_ingredients = [value.casefold().strip() for value in ingredients if value.strip()]
+    matches = []
+    for label in labels:
+        generic_names = _label_values(label.get("openfda", {}), "generic_name")
+        matched = [
+            ingredient for ingredient in normalized_ingredients
+            if any(ingredient in generic_name.casefold() for generic_name in generic_names)
+        ]
+        if matched:
+            matches.append((len(matched), label))
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return [label for _, label in matches]
+
+
+def _brand_search_term(concept_name: str) -> str:
+    """Remove strength and dosage-form text from a branded RxNorm name."""
+    strength = re.search(
+        r"\s+\d+(?:\.\d+)?\s*(?:mg|mcg|μg|ug|g|kg|ml|mL|l|meq|iu|units?|%)\b",
+        concept_name,
+        flags=re.IGNORECASE,
+    )
+    return concept_name[:strength.start()].strip() if strength else concept_name.strip()
+
+
+def _brand_matches_concept(label: dict, concept_name: str) -> bool:
+    normalized_concept = concept_name.casefold().strip()
+    return any(
+        normalized_concept == name.casefold().strip()
+        or normalized_concept.startswith(name.casefold().strip() + " ")
+        for name in _label_values(label.get("openfda", {}), "brand_name")
+        if name.strip()
+    )
+
+
+async def _find_fda_label(
+    client: httpx.AsyncClient,
+    ingredients: list[str],
+    brand_name: str,
+) -> tuple[dict | None, str | None]:
+    candidates: list[dict] = []
+    for ingredient in ingredients:
+        query_term = ingredient.replace('"', r'\"')
+        try:
+            result = await _openfda_get(
+                client,
+                f'openfda.generic_name:"{query_term}"',
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 404:
+                continue
+            raise
+        candidates.extend(result.get("results", []))
+
+    unique_candidates = {label.get("id"): label for label in candidates if label.get("id")}
+    matching = _matching_labels(list(unique_candidates.values()), ingredients)
+    if matching:
+        return matching[0], "active ingredient"
+
+    search_brand = _brand_search_term(brand_name)
+    if search_brand:
+        query_term = search_brand.replace('"', r'\"')
+        try:
+            result = await _openfda_get(
+                client,
+                f'openfda.brand_name:"{query_term}"',
+            )
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 404:
+                return None, None
+            raise
+        brand_candidates = [
+            label for label in result.get("results", [])
+            if _brand_matches_concept(label, brand_name)
+        ]
+        if brand_candidates:
+            return brand_candidates[0], "brand name"
+    return None, None
+
+
+def _format_label(label: dict, match_basis: str) -> dict:
+    sections = []
+    for field, title in LABEL_SECTIONS.items():
+        for passage in _label_values(label, field):
+            sections.append({"section": title, "text": passage})
+
+    openfda = label.get("openfda", {})
+    label_id = label.get("id")
+    return {
+        "match_basis": match_basis,
+        "metadata": {
+            "brand_name": openfda.get("brand_name", []),
+            "generic_name": openfda.get("generic_name", []),
+            "manufacturer_name": openfda.get("manufacturer_name", []),
+            "effective_time": label.get("effective_time"),
+            "set_id": label.get("set_id"),
+            "id": label_id,
+        },
+        "source_url": f"https://api.fda.gov/drug/label.json?search=id:%22{label_id}%22" if label_id else OPENFDA_API,
+        "sections": sections,
+    }
 
 
 async def _get_concept(
@@ -131,3 +260,34 @@ async def search_rxnorm(name: str = Query(..., min_length=1, max_length=200)) ->
         raise HTTPException(status_code=502, detail="Could not retrieve results from RxNorm.") from error
 
     return {"concepts": concepts}
+
+
+@app.get("/api/fda/label")
+async def get_fda_label(rxcui: str = Query(..., min_length=1, max_length=20)) -> dict:
+    """Find FDA labeling for a selected RxNorm concept and return source passages."""
+    timeout = httpx.Timeout(RXNORM_TIMEOUT_SECONDS)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, headers={"Accept": "application/json"}) as client:
+            concept = await _get_concept(client, rxcui, asyncio.Semaphore(1))
+            ingredients = [
+                item["name"] for item in concept.get("ingredients", [])
+                if item.get("name")
+            ]
+            label, match_basis = await _find_fda_label(client, ingredients, concept.get("name", ""))
+    except httpx.TimeoutException as error:
+        raise HTTPException(status_code=504, detail="FDA or RxNorm did not respond in time.") from error
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"FDA or RxNorm returned HTTP {error.response.status_code}.",
+        ) from error
+    except (httpx.RequestError, ValueError) as error:
+        raise HTTPException(status_code=502, detail="Could not retrieve the FDA label.") from error
+
+    if label is None or match_basis is None:
+        return {"matched": False, "rxcui": rxcui, "label": None}
+    return {
+        "matched": True,
+        "rxcui": rxcui,
+        "label": _format_label(label, match_basis),
+    }
