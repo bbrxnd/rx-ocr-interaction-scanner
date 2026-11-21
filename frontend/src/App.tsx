@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import type { SubmitEvent } from 'react'
 
-const RXNORM_API = 'https://rxnav.nlm.nih.gov/REST'
-
 type RxNormProperties = {
   rxcui: string
   name: string
@@ -20,69 +18,7 @@ type DrugConcept = RxNormProperties & {
   ingredients: Ingredient[]
 }
 
-type SearchResponse = {
-  idGroup?: { rxnormId?: string[] }
-}
-
-type ApproximateResponse = {
-  approximateGroup?: {
-    candidate?: Array<{ rxcui: string; score: string; rank: string; name?: string }>
-  }
-}
-
-type PropertiesResponse = { properties?: RxNormProperties }
-
-type RelatedResponse = {
-  relatedGroup?: {
-    conceptGroup?: Array<{ tty?: string; conceptProperties?: Ingredient[] }>
-  }
-}
-
-async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(url, { signal, headers: { Accept: 'application/json' } })
-  if (!response.ok) throw new Error(`RxNorm returned HTTP ${response.status}. Please try again.`)
-  return response.json() as Promise<T>
-}
-
-async function getConcept(rxcui: string, signal: AbortSignal): Promise<DrugConcept> {
-  const [propertyResult, relatedResult] = await Promise.all([
-    getJson<PropertiesResponse>(`${RXNORM_API}/rxcui/${encodeURIComponent(rxcui)}/properties.json`, signal),
-    getJson<RelatedResponse>(`${RXNORM_API}/rxcui/${encodeURIComponent(rxcui)}/related.json?tty=IN+MIN+PIN`, signal),
-  ])
-
-  const properties = propertyResult.properties
-  if (!properties) throw new Error('RxNorm did not return details for a matched concept.')
-
-  const ingredients = (relatedResult.relatedGroup?.conceptGroup ?? [])
-    .filter((group) => ['IN', 'MIN', 'PIN'].includes(group.tty ?? ''))
-    .flatMap((group) => group.conceptProperties ?? [])
-  const uniqueIngredients = [...new Map(ingredients.map((item) => [item.rxcui, item])).values()]
-
-  return { ...properties, ingredients: uniqueIngredients }
-}
-
-async function searchConcepts(query: string, signal: AbortSignal): Promise<DrugConcept[]> {
-  const params = new URLSearchParams({ name: query, search: '2', allsrc: '0' })
-  const exact = await getJson<SearchResponse>(`${RXNORM_API}/rxcui.json?${params}`, signal)
-  let rxcuis = exact.idGroup?.rxnormId ?? []
-
-  if (rxcuis.length === 0) {
-    const approximateParams = new URLSearchParams({ term: query, maxEntries: '10', option: '1' })
-    const approximate = await getJson<ApproximateResponse>(`${RXNORM_API}/approximateTerm.json?${approximateParams}`, signal)
-    rxcuis = [...new Set((approximate.approximateGroup?.candidate ?? []).map((item) => item.rxcui))]
-  }
-
-  const concepts = await Promise.all(rxcuis.slice(0, 8).map(async (rxcui) => {
-    try {
-      return await getConcept(rxcui, signal)
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') throw error
-      return null
-    }
-  }))
-
-  return concepts.filter((concept): concept is DrugConcept => concept !== null)
-}
+type SearchResponse = { concepts?: DrugConcept[]; detail?: string }
 
 export default function App() {
   const [query, setQuery] = useState('')
@@ -104,13 +40,17 @@ export default function App() {
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), 15000)
     try {
-      const results = await searchConcepts(medicationName, controller.signal)
+      const params = new URLSearchParams({ name: medicationName })
+      const response = await fetch(`/api/rxnorm/search?${params}`, { signal: controller.signal })
+      const body = await response.json() as SearchResponse
+      if (!response.ok) throw new Error(body.detail ?? `Search failed with HTTP ${response.status}.`)
+      const results = body.concepts ?? []
       setConcepts(results)
       if (results.length === 0) setError('No matching RxNorm concepts were found. Try a generic or brand name, or include the strength and dosage form.')
     } catch (searchError) {
       setError(searchError instanceof DOMException && searchError.name === 'AbortError'
-        ? 'The RxNorm request timed out. Please try again.'
-        : searchError instanceof Error ? searchError.message : 'Could not reach RxNorm. Please try again.')
+        ? 'The lookup timed out. Please try again.'
+        : searchError instanceof Error ? searchError.message : 'Could not reach the application API. Please try again.')
     } finally {
       window.clearTimeout(timeout)
       setLoading(false)
