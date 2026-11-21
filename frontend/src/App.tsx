@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PairReview from './PairReview'
 import type { SubmitEvent } from 'react'
 import ExplainPanel from './ExplainPanel'
 
@@ -106,9 +107,11 @@ export default function App() {
     <main className="page-shell">
       <header className="page-header">
         <p className="eyebrow">Medication reference</p>
-        <h1>Medication label lookup</h1>
+        <h1>Medication evidence explorer</h1>
         <p className="intro">Search a medication, select the matching RxNorm concept, and review evidence from its FDA label.</p>
       </header>
+
+      <PairReview />
 
       <section className="search-panel" aria-labelledby="search-title">
         <h2 id="search-title">Look up a medication</h2>
