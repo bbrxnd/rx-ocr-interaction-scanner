@@ -1,18 +1,14 @@
-"""Extract text from validated images using a shared local EasyOCR reader."""
+"""Local OCR for user-supplied images; no images are stored on disk."""
 import io
-import os
-import threading
+import shutil
+import subprocess
 import warnings
-from pathlib import Path
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_PIXELS = 20_000_000
-MODEL_DIR = Path(__file__).resolve().parents[1] / '.cache' / 'easyocr'
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
-_reader = None
-_reader_lock = threading.Lock()
 
 
 class OCRError(Exception):
@@ -20,23 +16,11 @@ class OCRError(Exception):
         self.message, self.status = message, status
 
 
-def _get_reader():
-    global _reader
-    if _reader is None:
-        import certifi
-        import easyocr
-        # Python installations without a configured system CA store still verify downloads.
-        os.environ.setdefault('SSL_CERT_FILE', certifi.where())
-        _reader = easyocr.Reader(
-            ['en'], gpu=False, model_storage_directory=str(MODEL_DIR),
-            user_network_directory=str(MODEL_DIR), verbose=False,
-        )
-    return _reader
-
-
 def extract_text(data: bytes) -> str:
     if not data or len(data) > MAX_BYTES:
         raise OCRError('Choose an image no larger than 10 MB.', 413 if data else 422)
+    if not shutil.which('tesseract'):
+        raise OCRError('OCR is unavailable: install Tesseract and restart the backend.', 503)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('error', Image.DecompressionBombWarning)
@@ -47,17 +31,23 @@ def extract_text(data: bytes) -> str:
                     raise OCRError('Image dimensions are too large (maximum 20 megapixels).')
                 image = ImageOps.exif_transpose(image).convert('RGB')
                 image.load()
-                scale = min(2.0, 1600 / max(image.size))
-                if scale != 1:
-                    image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
+                buffer = io.BytesIO()
+                image.save(buffer, format='PNG')
+                scale = min(3.0, 1600 / max(image.size))
+                enhanced = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS) if scale > 1 else image
+                enhanced_buffer = io.BytesIO()
+                enhanced.save(enhanced_buffer, format='PNG')
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         raise OCRError('Could not read this image. Use a valid JPEG, PNG, or WebP under 20 megapixels.') from exc
     try:
-        import numpy as np
-        # Reader initialization and inference are serialized to avoid duplicate model downloads
-        # and concurrent access to the shared model.
-        with _reader_lock:
-            lines = _get_reader().readtext(np.asarray(image), detail=0, paragraph=False)
-    except Exception as exc:
-        raise OCRError('EasyOCR could not process the image. Check the backend setup and model download.', 503) from exc
-    return '\n'.join(line.strip() for line in lines if isinstance(line, str) and line.strip())
+        result = subprocess.run(['tesseract', 'stdin', 'stdout', '-l', 'eng'], input=buffer.getvalue(), capture_output=True, timeout=30, check=True)
+        sparse = subprocess.run(['tesseract', 'stdin', 'stdout', '-l', 'eng', '--psm', '11'], input=enhanced_buffer.getvalue(), capture_output=True, timeout=30, check=True)
+    except subprocess.TimeoutExpired as exc:
+        raise OCRError('OCR timed out. Try a smaller, clearer image.', 504) from exc
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise OCRError('OCR could not process this image. Check the Tesseract installation.', 503) from exc
+    standard_text = result.stdout.decode('utf-8', errors='replace').strip()
+    sparse_text = sparse.stdout.decode('utf-8', errors='replace').strip()
+    if standard_text and sparse_text and standard_text != sparse_text:
+        return f'Standard scan:\n{standard_text}\n\nAdditional scan:\n{sparse_text}'
+    return standard_text or sparse_text
