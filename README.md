@@ -8,10 +8,12 @@ passage it is based on.
 ## Feature Plan
 
 - [x] Project skeleton
-- [x] RxNorm drug search and confirmation
-- [x] FDA label evidence + label matching
-- [ ] Gemini explanations
+- [x] RxNorm drug search
+- [x] FDA label lookup (one medication at a time)
+- [x] Gemini plain-language explanations, checked against label quotes
+- [ ] Medication list + drug–drug interaction check
 - [ ] Photo scanning (OCR)
+- [ ] Allergy and food checks
 
 ## Run instructions
 
@@ -26,6 +28,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 API docs: http://localhost:8000/docs
+
+To turn on the "Explain in plain language" button, copy `backend/.env.example` to `backend/.env`
+and add a free Gemini API key from https://aistudio.google.com/apikey. Run the tests with `pytest` from `backend/`.
+
 
 ### Frontend (Node 20.19 or newer)
 ```powershell
