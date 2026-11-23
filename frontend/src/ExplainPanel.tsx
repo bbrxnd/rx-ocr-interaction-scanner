@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { errorText, readJson } from './api'
 
 export type EvidenceInput = { drug: string; section: string; text: string }
 
@@ -30,17 +31,14 @@ export default function ExplainPanel({ medications, evidence }: Props) {
   async function handleExplain() {
     setLoading(true)
     setError('')
-    setResult(null)
     try {
       const response = await fetch('/api/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ medications, evidence }),
       })
-      const body = await response.json()
-      if (!response.ok) {
-        throw new Error(typeof body.detail === 'string' ? body.detail : `Explanation failed with HTTP ${response.status}.`)
-      }
+      const body = await readJson<ExplainResult>(response)
+      if (!response.ok || !body.status) throw new Error(errorText(body, response, 'The explanation'))
       setResult(body as ExplainResult)
     } catch (explainError) {
       setError(explainError instanceof Error ? explainError.message : 'Could not get an explanation.')
@@ -50,23 +48,25 @@ export default function ExplainPanel({ medications, evidence }: Props) {
   }
 
   return (
-    <section className="explain-panel" aria-live="polite" aria-busy={loading}>
-      <h3>Plain-language explanation</h3>
-      <button className="select-concept-button" type="button" disabled={loading} onClick={() => void handleExplain()}>
-        {loading ? 'Explaining…' : 'Explain in plain language'}
-      </button>
+    <div className="explain-panel" aria-live="polite" aria-busy={loading}>
+      {!result && (
+        <button className="button secondary" type="button" disabled={loading} onClick={() => void handleExplain()}>
+          {loading ? 'Explaining…' : 'Explain in plain language'}
+        </button>
+      )}
 
-      {error && <p className="status-message error-message" role="alert">{error}</p>}
+      {error && <p className="status error" role="alert">{error}</p>}
 
       {result?.status === 'abstained' && (
-        <p className="status-message">
-          We couldn't write an explanation that is backed by exact words from the label. Please read the
-          label passages below and ask a pharmacist.
+        <p className="status">
+          We couldn't write an explanation that is backed by exact words from the label. Please read the label
+          text and ask a pharmacist.
         </p>
       )}
 
       {result?.status === 'explained' && (
-        <>
+        <div className="explain-result">
+          <h4>In plain language</h4>
           <ul className="explain-list">
             {result.points.map((point, index) => (
               <li key={`${point.evidence_id}-${index}`}>
@@ -78,13 +78,13 @@ export default function ExplainPanel({ medications, evidence }: Props) {
               </li>
             ))}
           </ul>
-          <p className="label-disclaimer">
-            Written by AI ({result.model}) using only this FDA label's text. Each point quotes the label
-            section it comes from. This is not medical advice; ask a doctor or pharmacist.
+          <p className="fine-print">
+            Written by AI ({result.model}) using only the FDA label text shown here. Each point quotes the label
+            it comes from. This is not medical advice; ask a doctor or pharmacist.
             {result.dropped > 0 && ` ${result.dropped} point(s) were removed because their quote wasn't found in the label.`}
           </p>
-        </>
+        </div>
       )}
-    </section>
+    </div>
   )
 }

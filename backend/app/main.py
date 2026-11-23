@@ -2,16 +2,19 @@ import asyncio
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.evidence import load_data, normalize, parse_names, retrieve
 from app.providers import ProviderError, get_provider
 from app.ocr import MAX_BYTES, OCRError, extract_text
+from app.check import Medication, find_interactions
+from app.evidence import load_data, normalize, parse_names, retrieve
 
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 from .explain import router as explain_router
@@ -386,4 +389,108 @@ async def get_fda_label(rxcui: str = Query(..., min_length=1, max_length=20, pat
         "matched": True,
         "rxcui": rxcui,
         "label": _format_label(label, match_basis),
+    }
+
+# ---- Interaction check across a medication list ----
+
+RXCLASS_PARAMS = {"relaSource": "FDASPL", "relas": "has_EPC"}  # FDA "established pharmacologic class"
+RxCUI = Annotated[str, StringConstraints(pattern=r"^\d{1,10}$")]
+
+
+class CheckRequest(BaseModel):
+    rxcuis: list[RxCUI] = Field(min_length=2, max_length=10)
+
+
+async def _drug_classes(client: httpx.AsyncClient, ingredient_rxcuis: list[str]) -> list[str]:
+    """FDA drug classes for the ingredients, e.g. ["Nonsteroidal Anti-inflammatory Drug"].
+
+    Classes only add extra match words, so if RxClass fails the check still runs on names.
+    """
+    results = await asyncio.gather(
+        *(
+            _rxnorm_get(client, "/rxclass/class/byRxcui.json", {"rxcui": rxcui, **RXCLASS_PARAMS})
+            for rxcui in ingredient_rxcuis
+        ),
+        return_exceptions=True,
+    )
+    classes: list[str] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        for item in result.get("rxclassDrugInfoList", {}).get("rxclassDrugInfo", []):
+            name = item.get("rxclassMinConceptItem", {}).get("className")
+            if name and name not in classes:
+                classes.append(name)
+    return classes
+
+
+def _brand_name(concept: dict) -> str | None:
+    """"Advil" for a brand concept, or the [Brand] part of a branded product name."""
+    if concept.get("tty") == "BN":
+        return concept.get("name")
+    bracket = re.search(r"\[([^\]]+)\]\s*$", concept.get("name", ""))
+    return bracket.group(1) if bracket else None
+
+
+async def _load_medication(
+    client: httpx.AsyncClient,
+    rxcui: str,
+    semaphore: asyncio.Semaphore,
+) -> tuple[Medication, dict | None]:
+    """Look up one medication's ingredients, drug classes, and FDA label."""
+    async with semaphore:
+        concept = await _get_concept(client, rxcui, asyncio.Semaphore(1))
+        base = [item for item in concept.get("ingredients", []) if item.get("tty") == "IN" and item.get("name")]
+        ingredients = [item["name"] for item in base]
+        (label, match_basis), classes = await asyncio.gather(
+            _find_fda_label(client, rxcui, ingredients, concept.get("name", "")),
+            _drug_classes(client, [item["rxcui"] for item in base if item.get("rxcui")]),
+        )
+    formatted = _format_label(label, match_basis) if label and match_basis else None
+    medication = Medication(
+        rxcui=rxcui,
+        name=concept.get("name") or rxcui,
+        ingredients=ingredients,
+        classes=classes,
+        brand=_brand_name(concept),
+        label=label,
+        source_url=formatted["source_url"] if formatted else None,
+    )
+    return medication, formatted
+
+
+@app.post("/api/check")
+async def check_interactions(request: CheckRequest) -> dict:
+    """Find label passages where one medication's FDA label mentions another one on the list."""
+    rxcuis = list(dict.fromkeys(request.rxcuis))
+    if len(rxcuis) < 2:
+        raise HTTPException(status_code=422, detail="Add at least two different medications.")
+
+    timeout = httpx.Timeout(RXNORM_TIMEOUT_SECONDS)
+    semaphore = asyncio.Semaphore(3)  # stay well under RxNav's 20 requests/second limit
+    try:
+        async with httpx.AsyncClient(timeout=timeout, headers={"Accept": "application/json"}) as client:
+            loaded = await asyncio.gather(*(_load_medication(client, rxcui, semaphore) for rxcui in rxcuis))
+    except httpx.TimeoutException as error:
+        raise HTTPException(status_code=504, detail="FDA or RxNorm did not respond in time.") from error
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"FDA or RxNorm returned HTTP {error.response.status_code}.",
+        ) from error
+    except (httpx.RequestError, ValueError) as error:
+        raise HTTPException(status_code=502, detail="Could not look up the medications.") from error
+
+    return {
+        "medications": [
+            {
+                "rxcui": medication.rxcui,
+                "name": medication.name,
+                "ingredients": medication.ingredients,
+                "drug_groups": medication.groups,
+                "label": formatted,
+            }
+            for medication, formatted in loaded
+        ],
+        "pairs": find_interactions([medication for medication, _ in loaded]),
     }
