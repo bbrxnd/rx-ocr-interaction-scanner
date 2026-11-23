@@ -2,17 +2,39 @@
 
 **CECS 458/558, Fall 2026 - Team 10:** Roger Carrillo, Brandon Chu, Nhan Nguyen, David Ramos
 
-App that helps check a loved one's medications for drug–drug, drug–food and allergy concerns. Medication is matched to its RxNorm entry, warnings come from FDA drug label text, and every warning quotes the label
-passage it is based on.
+A web app that helps family caregivers check a loved one's medication list. Each medication is matched
+to its RxNorm entry, every pair is checked against the warnings in the official FDA drug labels, and
+every warning quotes the exact label sentence it is based on. Gemini can then explain those sentences in
+plain language, but it never decides whether an interaction exists.
+
+> Educational prototype, not clinically reviewed and not medical advice. Discuss concerns with a
+> pharmacist or prescriber.
 
 ## Feature Plan
 
-- [x] Project skeleton
-- [x] RxNorm drug search and FDA label lookup (one medication at a time)
-- [x] Gemini explanations of individual FDA label passages, checked against label quotes
-- [ ] Medication list and interaction check — initial prototype covering two pairs
-- [ ] Photo scanning (OCR) — initial local prototype with manual review
+- [x] Project skeleton (React + FastAPI)
+- [x] RxNorm drug search and FDA label lookup
+- [x] Gemini plain-language explanations, checked against exact label quotes
+- [x] Medication list and interaction check for any drugs (`/api/check`)
+- [x] Photo scanning (EasyOCR) that feeds the RxNorm search
+- [ ] Evaluation: interaction accuracy, OCR accuracy, explanation quality
 - [ ] Allergy and food checks
+
+## How it works
+
+1. **Add medications.** Type a name or scan a pill bottle photo. EasyOCR reads the photo on the
+   backend, you choose the line with the drug name, and the RxNorm search finds matching products.
+   You pick the right one, so nothing is added without your confirmation.
+2. **Check for interactions.** For each medication, the backend gets its ingredients (RxNorm), its drug
+   class (RxClass, e.g. "Nonsteroidal Anti-inflammatory Drug"), and its newest FDA label (openFDA).
+   For every pair, it searches each label's risk sections for the other drug's ingredient, brand name,
+   or class words, because labels often say "NSAIDs" instead of "ibuprofen". Each match is shown as the
+   exact label sentence with its section, a severity (boxed warning, contraindication, or "Do not use"
+   count as serious), and a DailyMed link. Pairs with the same ingredient or the same type of medicine
+   are also flagged. Pairs with nothing found are reported as "no label warnings found", never as safe.
+3. **Explain in plain language.** Gemini rewrites only the sentences that were found. Every point must
+   quote the label; a point whose quote is not found word for word in the label is dropped, and if no
+   points remain the app says it cannot explain instead of guessing.
 
 ## Run instructions
 
@@ -28,9 +50,8 @@ uvicorn app.main:app --reload
 ```
 API docs: http://localhost:8000/docs
 
-To turn on the "Explain in plain language" button, copy `backend/.env.example` to `backend/.env`
-and add a free Gemini API key from https://aistudio.google.com/apikey. Run the tests with `pytest` from `backend/`.
-
+To turn on the "Explain in plain language" button, copy `backend/.env.example` to `backend/.env` and
+add a free Gemini API key from https://aistudio.google.com/apikey. Never commit `.env`.
 
 ### Frontend (Node 20.19 or newer)
 ```powershell
@@ -40,20 +61,23 @@ npm run dev
 ```
 Open http://localhost:5173
 
-## Review the two-pair MVP
+## API endpoints
 
-The React app includes a curated, ingredient-level comparison alongside the live RxNorm and FDA label lookup. Enter 2–6 exact generic ingredient names, review and confirm the list, then select **Find evidence and explain**. Try the supported example (warfarin and aspirin), or warfarin and ibuprofen. The coverage example (aspirin and lisinopril) shows how unsupported pairs are reported. Recognized names are warfarin, aspirin, ibuprofen, acetaminophen, and lisinopril. Only the first two pairs have curated evidence; missing evidence does not establish safety.
+| Endpoint | What it does |
+|---|---|
+| `GET /api/rxnorm/search?name=` | RxNorm matches (exact, then approximate) with their ingredients |
+| `GET /api/fda/label?rxcui=` | Newest FDA label: exact product first, then brand, then same ingredients |
+| `POST /api/check` | Checks every pair in a list of 2–10 RxCUIs against their FDA labels |
+| `POST /api/explain` | Plain-language explanation of label passages, with quote checking |
+| `POST /api/ocr` | Reads text from a JPEG, PNG, or WebP photo with EasyOCR |
+| `POST /api/evidence` | Earlier curated two-pair prototype, kept for reference (not used by the page) |
+| `GET /api/health` | Health check |
 
-For pair review, the default explanation is a prepared demo summary, not an AI-generated response. The separate individual-label lookup has its own Gemini explanation button. To use an optional model, copy `backend/.env.example` to `backend/.env` and configure `AI_PROVIDER`, `AI_BASE_URL`, and `AI_MODEL`; set `AI_API_KEY` if the compatible provider requires it. Supported providers are `demo`, `ollama`, and an OpenAI-compatible chat service. Restart the backend after changes. Provider failures leave the source evidence visible. Citation validation checks the response format and IDs, not clinical accuracy.
+### Tests and checks
+- Backend: `python -m pytest -q` from `backend/`
+- Frontend: `npm run lint` and `npm run build` from `frontend/`
 
-The pair review uses a bundled DailyMed excerpt, not live FDA label matching. The separate lookup below it uses live RxNorm and openFDA services and requires internet access. The pair review does not evaluate doses, formulations, food, allergies, or patient-specific factors. This educational prototype is not clinically reviewed; discuss concerns with a pharmacist or prescriber.
-
-Run backend tests with `cd backend && .venv/bin/python -m pytest -q`; run frontend checks with `cd frontend && npm run build && npm run lint`.
-
-## Scan a photo
-
-Install the backend Python requirements and restart the backend. Choose one or more JPEG, PNG, or WebP images under 10 MB and 20 megapixels each, and select **Extract text**. Compare the editable text with each photo, select correct suggested ingredients, and add them to the medication list. Manually enter missing names, then confirm the complete list. Suggestions use exact matches against the five supported generic ingredients; they can miss medicines or match unrelated text. Nothing is added without your selection.
-
-EasyOCR runs locally on the backend using its pretrained English models in CPU mode. On the first scan it downloads model files to `backend/.cache/easyocr`, so internet access and a writable cache directory are required for that initial setup. Later scans reuse the models; the first scan may take longer. For deployment, include the model files in the server environment or provide a persistent cache. EasyOCR and its PyTorch dependencies increase installation size and memory use. No separate OCR system executable is needed.
-
-Uploaded files may be temporarily spooled by the web server during the request and are closed afterward; the app does not retain them. Do not use real prescription photos for shared testing. Recognition varies with image quality, layout, and handwriting. This initial implementation uses English OCR; it does not support HEIC or PDF.
+## Limits
+- Finds only interactions that a label mentions by drug name or by a drug class in our word list; labels do not list every interaction.
+- Does not consider doses, timing, food, allergies, or patient-specific factors yet.
+- Needs internet access for RxNorm, RxClass, openFDA, and Gemini.
