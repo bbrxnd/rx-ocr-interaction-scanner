@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import type { ReactNode, SubmitEvent } from 'react'
+import type { CSSProperties, ReactNode, SubmitEvent } from 'react'
 import PhotoScan from './PhotoScan'
 import { errorText, readJson } from '../../lib/api'
 import { describeConcept } from '../../lib/format'
@@ -28,6 +28,7 @@ function baseIngredients(concept: DrugConcept): string[] {
 
 export default function MedicationSearch({ addedRxcuis, full, onAdd }: Props) {
   const [mode, setMode] = useState<Mode>('search')
+  const [direction, setDirection] = useState(0) // which way the panel slides in: 1 from the right, -1 from the left
   const [query, setQuery] = useState('')
   const [concepts, setConcepts] = useState<DrugConcept[]>([])
   const [searchedFor, setSearchedFor] = useState('')
@@ -37,8 +38,11 @@ export default function MedicationSearch({ addedRxcuis, full, onAdd }: Props) {
   const [scanCount, setScanCount] = useState(0) // a new number resets the photo panel
   const latestSearch = useRef(0) // ignore answers to older searches
 
+  const modeIndex = MODES.findIndex((item) => item.id === mode)
+
   function switchMode(next: Mode) {
     latestSearch.current++
+    setDirection(MODES.findIndex((item) => item.id === next) > modeIndex ? 1 : -1)
     setMode(next)
     setConcepts([])
     setMessage(null)
@@ -103,6 +107,8 @@ export default function MedicationSearch({ addedRxcuis, full, onAdd }: Props) {
   return (
     <div className="add-medication">
       <div className="mode-switch" role="group" aria-label="How to add a medication">
+        {/* The white pill behind the chosen button; it slides between them */}
+        <span className="mode-indicator" aria-hidden="true" style={{ '--index': modeIndex } as CSSProperties} />
         {MODES.map((item) => (
           <button
             key={item.id}
@@ -119,37 +125,50 @@ export default function MedicationSearch({ addedRxcuis, full, onAdd }: Props) {
 
       {full && <p className="status">You've reached the limit of 10 medications. Remove one to add another.</p>}
 
-      {!full && mode === 'search' && (
-        <form role="search" onSubmit={handleSubmit}>
-          <label htmlFor="medication-name" className="field-label">Medicine name</label>
-          <div className="search-row">
-            <input
-              id="medication-name"
-              className="text-input"
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              autoComplete="off"
+      {/* A new key re-mounts the panel, which plays its slide-in animation */}
+      {!full && (
+        <div className="mode-panel" key={mode} data-direction={direction}>
+          {mode === 'search' ? (
+            <form role="search" onSubmit={handleSubmit}>
+              <label htmlFor="medication-name" className="field-label">Medicine name</label>
+              <div className="search-row">
+                <input
+                  id="medication-name"
+                  className="text-input"
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  autoComplete="off"
+                />
+                <button type="submit" className="button primary" disabled={loading || !query.trim()}>
+                  {loading && <span className="spinner" aria-hidden="true" />}
+                  {loading ? 'Searching…' : 'Search'}
+                </button>
+              </div>
+              <p className="hint">Brand or generic name. Strength helps, like "lisinopril 10 mg".</p>
+            </form>
+          ) : (
+            <PhotoScan
+              key={`${mode}-${scanCount}`}
+              source={mode}
+              onSearchLine={(line) => void search(line, true)}
+              onStopCamera={() => switchMode('search')}
             />
-            <button type="submit" className="button primary" disabled={loading || !query.trim()}>
-              {loading ? 'Searching…' : 'Search'}
-            </button>
-          </div>
-          <p className="hint">Brand or generic name. Strength helps, like "lisinopril 10 mg".</p>
-        </form>
-      )}
-
-      {!full && mode !== 'search' && (
-        <PhotoScan
-          key={`${mode}-${scanCount}`}
-          source={mode}
-          onSearchLine={(line) => void search(line, true)}
-          onStopCamera={() => switchMode('search')}
-        />
+          )}
+        </div>
       )}
 
       <div aria-live="polite" aria-busy={loading}>
-        {loading && <p className="status">Searching RxNorm…</p>}
+        {loading && (
+          <>
+            <p className="visually-hidden">Searching RxNorm…</p>
+            <div className="skeleton-list" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+          </>
+        )}
         {message && (
           <p className={message.isError ? 'status error' : 'status'} role={message.isError ? 'alert' : undefined}>
             {message.text}

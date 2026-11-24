@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import ExplainPanel from './ExplainPanel'
 import { capitalize, formatLabelDate, shortName } from '../../lib/format'
-import { AlertIcon, InfoIcon, PrinterIcon } from '../icons'
+import { PrinterIcon } from '../icons'
 import type { CheckedMedication, CheckResponse, Finding, Pair } from '../../types'
 
 const FINDINGS_SHOWN = 2 // the rest go behind "Show more"
@@ -68,7 +68,7 @@ function PairCard({ pair, names }: { pair: Pair; names: Names }) {
     <article className={`pair ${tone}`} aria-labelledby={titleId}>
       <div className="pair-head">
         <span className="pair-tag">
-          {tone === 'serious' ? <AlertIcon size={16} /> : <InfoIcon size={16} />}
+          <span className={`dot ${tone}`} />
           {tagText(pair)}
         </span>
         <h3 id={titleId}>{first} + {second}</h3>

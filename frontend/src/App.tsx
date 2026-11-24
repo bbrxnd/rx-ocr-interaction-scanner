@@ -1,8 +1,11 @@
 import { useRef, useState } from 'react'
 import CheckResults from './components/results/CheckResults'
 import MedicationSearch from './components/add-medication/MedicationSearch'
+import ThemeToggle from './components/ThemeToggle'
+import { LogoMark } from './components/icons'
 import { errorText, readJson } from './lib/api'
 import { describeMedication } from './lib/format'
+import { prefersReducedMotion } from './lib/motion'
 import type { CheckResponse, Medication } from './types'
 
 const MAX_MEDICATIONS = 10
@@ -15,6 +18,7 @@ export default function App() {
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
   const listVersion = useRef(0) // results from before a list change are thrown away
+  const resultsRef = useRef<HTMLElement>(null)
 
   function changeList(next: Medication[]) {
     listVersion.current++
@@ -30,6 +34,11 @@ export default function App() {
     setChecking(true)
     setError('')
     setResult(null)
+    
+    const results = resultsRef.current
+    if (results && results.getBoundingClientRect().top > window.innerHeight * 0.75) {
+      results.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' })
+    }
     try {
       const response = await fetch('/api/check', {
         method: 'POST',
@@ -56,19 +65,25 @@ export default function App() {
       <header className="site-header">
         <div className="container header-inner">
           <div className="brand">
+            <span className="brand-mark"><LogoMark size={18} /></span>
             <span className="brand-name">Medication Interaction Explainer</span>
-            <span className="brand-tagline">Checks medicines against their FDA labels</span>
           </div>
-          <a className="no-print" href={ABOUT_URL} target="_blank" rel="noreferrer">How it works</a>
+          <div className="header-actions no-print">
+            <a className="header-link" href={ABOUT_URL} target="_blank" rel="noreferrer">How it works</a>
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 
       <main className="container page-main">
-        <h1>Check a medication list</h1>
-        <p className="intro">
-          Add every medicine the person takes. We compare each pair against the warnings in their FDA labels and show
-          you the exact label text. This is not medical advice. Bring questions to a pharmacist.
-        </p>
+        <div className="hero">
+          <h1>Check a medication list</h1>
+          <p className="lede">
+            Add every medicine someone takes. We compare each pair against the warnings in their FDA labels and show
+            you the exact text.
+          </p>
+          <p className="hero-note">Not medical advice. Consult a pharmacist for further clarification</p>
+        </div>
 
         <div className="layout">
           <section className="panel meds-panel" aria-labelledby="meds-heading">
@@ -115,6 +130,7 @@ export default function App() {
                 disabled={medications.length < 2 || checking}
                 onClick={() => void runCheck()}
               >
+                {checking && <span className="spinner" aria-hidden="true" />}
                 {checking ? 'Checking labels…' : 'Check interactions'}
               </button>
               <p className="hint">
@@ -124,17 +140,52 @@ export default function App() {
             </div>
           </section>
 
-          <section className="results-column" aria-label="Results" aria-live="polite" aria-busy={checking}>
+          <section
+            ref={resultsRef}
+            className="results-column"
+            aria-label="Results"
+            aria-live="polite"
+            aria-busy={checking}
+          >
             {!result && !checking && !error && (
               <div className="results-empty">
                 <h2>What the labels say</h2>
                 <p>
-                  Add at least two medications, then select <strong>Check interactions</strong>. For each pair, you'll
-                  see the exact sentences from the FDA labels that mention the other medicine.
+                  Add at least two medications, then select Check interactions. For each pair, you'll see the exact
+                  sentences from the FDA labels that mention the other medicine.
                 </p>
+                <ul className="legend" aria-label="What the colors mean">
+                  <li>
+                    <span className="dot serious" />
+                    <strong>Serious</strong>
+                    <span>A boxed warning, or the label says not to take them together</span>
+                  </li>
+                  <li>
+                    <span className="dot warning" />
+                    <strong>Warning</strong>
+                    <span>Another label warning that mentions the other medicine</span>
+                  </li>
+                  <li>
+                    <span className="dot shared" />
+                    <strong>Same ingredient or type</strong>
+                    <span>Taking both could mean a double dose</span>
+                  </li>
+                </ul>
               </div>
             )}
-            {checking && <p className="status">Looking up {medications.length} FDA labels and comparing every pair…</p>}
+            {checking && (
+              <>
+                <p className="status">Looking up {medications.length} FDA labels and comparing every pair…</p>
+                {/* Placeholder cards while the check runs */}
+                {[1, 2].map((placeholder) => (
+                  <div className="skeleton-card" key={placeholder} aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                ))}
+              </>
+            )}
             {error && <p className="status error" role="alert">{error}</p>}
             {result && <CheckResults result={result} checkedAt={checkedAt} />}
           </section>
