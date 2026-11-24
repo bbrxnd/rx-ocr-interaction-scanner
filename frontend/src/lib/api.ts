@@ -14,3 +14,13 @@ export async function readJson<T>(response: Response): Promise<Partial<T> & { de
 export function errorText(body: { detail?: unknown }, response: Response, action: string): string {
   return typeof body.detail === 'string' ? body.detail : `${action} failed (HTTP ${response.status}).`
 }
+
+/** Send a photo to the backend's OCR and get back the text it read. */
+export async function readPhotoText(photo: Blob, fileName: string): Promise<string> {
+  const form = new FormData()
+  form.append('file', photo, fileName)
+  const response = await fetch('/api/ocr', { method: 'POST', body: form })
+  const body = await readJson<{ text: string }>(response)
+  if (!response.ok) throw new Error(errorText(body, response, 'Reading the photo'))
+  return body.text ?? ''
+}

@@ -6,6 +6,7 @@ export type Medication = {
   name: string
   tty: string
   ingredients: string[]
+  source: 'search' | 'photo'
 }
 
 /** One RxNorm search result from /api/rxnorm/search. */
