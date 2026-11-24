@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { errorText, readJson } from './api'
+import { errorText, readJson } from '../../lib/api'
 
 export type EvidenceInput = { drug: string; section: string; text: string }
 
@@ -50,7 +50,7 @@ export default function ExplainPanel({ medications, evidence }: Props) {
   return (
     <div className="explain-panel" aria-live="polite" aria-busy={loading}>
       {!result && (
-        <button className="button secondary" type="button" disabled={loading} onClick={() => void handleExplain()}>
+        <button className="button outline" type="button" disabled={loading} onClick={() => void handleExplain()}>
           {loading ? 'Explaining…' : 'Explain in plain language'}
         </button>
       )}
@@ -59,29 +59,26 @@ export default function ExplainPanel({ medications, evidence }: Props) {
 
       {result?.status === 'abstained' && (
         <p className="status">
-          We couldn't write an explanation that is backed by exact words from the label. Please read the label
-          text and ask a pharmacist.
+          We couldn't write an explanation that is backed by exact words from the label. Please read the label text
+          and ask a pharmacist.
         </p>
       )}
 
       {result?.status === 'explained' && (
         <div className="explain-result">
           <h4>In plain language</h4>
-          <ul className="explain-list">
+          <ul>
             {result.points.map((point, index) => (
               <li key={`${point.evidence_id}-${index}`}>
-                <p>{point.text}</p>
-                <blockquote>
-                  “{point.quote}”
-                  <cite>{point.drug} label · {point.section}</cite>
-                </blockquote>
+                {point.text}
+                <span className="quote-line">From the {point.drug} label: "{point.quote}"</span>
               </li>
             ))}
           </ul>
-          <p className="fine-print">
-            Written by AI ({result.model}) using only the FDA label text shown here. Each point quotes the label
-            it comes from. This is not medical advice; ask a doctor or pharmacist.
-            {result.dropped > 0 && ` ${result.dropped} point(s) were removed because their quote wasn't found in the label.`}
+          <p className="hint">
+            Written by AI ({result.model}) using only the label text on this page. Each quote was checked word for word
+            against the label. Not medical advice.
+            {result.dropped > 0 && ` ${result.dropped} point(s) were removed because their quote wasn't in the label.`}
           </p>
         </div>
       )}
